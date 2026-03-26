@@ -14,5 +14,6 @@ __pycache__/
 frontend/node_modules/
 frontend/dist/
 frontend/build_error.log
+deploy/hf-space/
 
 *.log

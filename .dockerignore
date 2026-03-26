@@ -1,0 +1,17 @@
+.git
+.gitignore
+frontend
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/*.pyc
+**/*.pyo
+**/*.log
+backend/.env
+frontend/.env
+render.yaml
+run-dev.bat
+setup-dev.bat
+build_error.log

@@ -251,6 +251,16 @@ python backend/test_ws_client.py --model violence --image test.jpg --frames 20
 
 ## Deployment Notes
 
+### Backend on Hugging Face Spaces
+
+- `Dockerfile` is included at the repo root for a Docker Space deployment.
+- `SPACE_README.md` contains the exact YAML front matter Hugging Face expects at the top of the Space repo `README.md`.
+- Run `powershell -ExecutionPolicy Bypass -File .\prepare-hf-space.ps1` to generate a clean backend-only Space bundle in `deploy/hf-space/`.
+- That bundle already renames `SPACE_README.md` to `README.md`, so you can push it straight to a separate Space repo.
+- Free `CPU Basic` hardware is available on Spaces, but the backend can sleep when idle and the first wake-up request may be slow.
+- After your frontend is live, set `Pegasusxz_CORS_ORIGINS` in the Space settings to your Vercel URL.
+- Once the Space finishes building, test `https://your-space-name.hf.space/health`.
+
 ### Backend on Render
 
 - `render.yaml` is included for the FastAPI service.
