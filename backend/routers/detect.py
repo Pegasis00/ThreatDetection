@@ -13,15 +13,17 @@ except ImportError:  # pragma: no cover
 
 try:
     from ..models import loader
+    from ..models.violence import create_sequence_state, run_violence_inference
     from ..utils.drawing import draw_annotated_image_base64
 except ImportError:  # pragma: no cover
     from models import loader
+    from models.violence import create_sequence_state, run_violence_inference
     from utils.drawing import draw_annotated_image_base64
 
 router = APIRouter(prefix="/detect", tags=["Detection"])
 
 DEFAULT_CONFIDENCE = 0.25
-SUPPORTED_MODELS = {"weapon", "smokefire"}
+SUPPORTED_MODELS = {"weapon", "smokefire", "violence"}
 MIN_CONFIDENCE = 0.01
 MAX_CONFIDENCE = 0.99
 DEFAULT_MAX_UPLOAD_BYTES = 8 * 1024 * 1024
@@ -74,9 +76,11 @@ def normalize_model_name(model_name: str) -> str:
         return "smokefire"
     if normalized == "weapon":
         return "weapon"
+    if normalized == "violence":
+        return "violence"
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail=f"Unsupported model '{model_name}'. Choose 'weapon' or 'smokefire'.",
+        detail=f"Unsupported model '{model_name}'. Choose 'weapon', 'smokefire', or 'violence'.",
     )
 
 
@@ -157,6 +161,14 @@ def _get_model_instance(model_name: str) -> Any:
             )
         return loader.weapon_model
 
+    if model_name == "violence":
+        if loader.violence_model is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=loader.violence_model_error or "Violence model is not loaded.",
+            )
+        return loader.violence_model
+
     if loader.smokefire_model is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -187,10 +199,20 @@ def run_model_inference(
     image: np.ndarray,
     model_name: str,
     confidence_threshold: float,
+    *,
+    sequence_state=None,
 ) -> dict[str, object]:
     normalized_model_name = normalize_model_name(model_name)
     normalized_confidence = sanitize_confidence_threshold(confidence_threshold)
     model = _get_model_instance(normalized_model_name)
+
+    if normalized_model_name == "violence":
+        return run_violence_inference(
+            model,
+            image,
+            normalized_confidence,
+            sequence_state=sequence_state,
+        )
 
     start_time = perf_counter()
     results = model.predict(
@@ -229,6 +251,15 @@ async def detect_smokefire(
     return run_model_inference(decoded_image, "smokefire", confidence_threshold)
 
 
+@router.post("/violence")
+async def detect_violence(
+    image: UploadFile = File(...),
+    confidence_threshold: float = Form(DEFAULT_CONFIDENCE),
+):
+    decoded_image = await _decode_upload_image(image)
+    return run_model_inference(decoded_image, "violence", confidence_threshold)
+
+
 @router.post("/annotated")
 async def detect_annotated(
     image: UploadFile = File(...),
@@ -253,6 +284,7 @@ async def detect_batch(
     include_annotations: bool = Form(False),
 ):
     normalized_model_name = normalize_model_name(model_name)
+    sequence_state = create_sequence_state() if normalized_model_name == "violence" else None
 
     if not images:
         raise HTTPException(
@@ -269,7 +301,12 @@ async def detect_batch(
     results: list[dict[str, object]] = []
     for image in images:
         decoded_image = await _decode_upload_image(image)
-        result = run_model_inference(decoded_image, normalized_model_name, confidence_threshold)
+        result = run_model_inference(
+            decoded_image,
+            normalized_model_name,
+            confidence_threshold,
+            sequence_state=sequence_state,
+        )
         if include_annotations:
             result["annotated_image_base64"] = draw_annotated_image_base64(
                 image=decoded_image,

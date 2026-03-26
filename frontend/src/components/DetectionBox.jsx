@@ -1,12 +1,13 @@
 import ModelBadge from './ModelBadge';
 
 export default function DetectionBox({ detection, model }) {
-  const isWeapon = model === 'weapon';
+  const toneClass =
+    model === 'weapon' ? 'is-weapon' : model === 'violence' ? 'is-violence' : 'is-hazard';
   const confidence = Math.round((detection.confidence || 0) * 100);
   const [x1, y1, x2, y2] = detection.bbox || [0, 0, 0, 0];
 
   return (
-    <article className={`detection-card ${isWeapon ? 'is-weapon' : 'is-hazard'}`}>
+    <article className={`detection-card ${toneClass}`}>
       <div className="detection-card__header">
         <div>
           <p className="detection-card__title">{detection.class || 'unknown'}</p>

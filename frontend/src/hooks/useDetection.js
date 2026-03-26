@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { detectAnnotated } from '../utils/api';
+import { buildCombinedResult, hasSelectedModels, isMultiModelSelection } from '../utils/models';
 import { addDetectionHistoryEntries, createClientId, getDetectionHistory } from '../utils/runtime';
 
 function buildHistoryEntries(result) {
@@ -16,28 +17,6 @@ function buildHistoryEntries(result) {
   }));
 }
 
-function buildCombinedResult(results) {
-  const entries = results.map((result) => ({
-    ...result,
-    mode: 'single',
-  }));
-
-  return {
-    mode: 'both',
-    image_size: entries[0]?.image_size || entries[1]?.image_size || null,
-    inference_time_ms: Number(
-      entries.reduce((total, entry) => total + (entry.inference_time_ms || 0), 0).toFixed(2),
-    ),
-    detections: entries.flatMap((entry) =>
-      (entry.detections || []).map((detection) => ({
-        ...detection,
-        model: entry.model,
-      })),
-    ),
-    results: entries,
-  };
-}
-
 export { getDetectionHistory };
 
 export function useDetection() {
@@ -50,27 +29,32 @@ export function useDetection() {
     setError(null);
   }, []);
 
-  const runAnnotated = useCallback(async (file, modelName, confidenceThreshold) => {
+  const runAnnotated = useCallback(async (file, selectedModels, confidenceThreshold) => {
     setLoading(true);
     setError(null);
 
     try {
-      const nextResult =
-        modelName === 'both'
-          ? buildCombinedResult(
-              await Promise.all([
-                detectAnnotated(file, 'weapon', confidenceThreshold),
-                detectAnnotated(file, 'smokefire', confidenceThreshold),
-              ]),
-            )
-          : {
-              ...(await detectAnnotated(file, modelName, confidenceThreshold)),
-              mode: 'single',
-            };
+      if (!hasSelectedModels(selectedModels)) {
+        throw new Error('Select at least one model to run a scan.');
+      }
+
+      const nextResult = isMultiModelSelection(selectedModels)
+        ? buildCombinedResult(
+            await Promise.all(
+              selectedModels.map((activeModel) =>
+                detectAnnotated(file, activeModel, confidenceThreshold),
+              ),
+            ),
+            selectedModels,
+          )
+        : {
+            ...(await detectAnnotated(file, selectedModels[0], confidenceThreshold)),
+            mode: 'single',
+          };
 
       setResult(nextResult);
       addDetectionHistoryEntries(
-        nextResult.mode === 'both'
+        nextResult.mode === 'multi'
           ? nextResult.results.flatMap((entry) => buildHistoryEntries(entry))
           : buildHistoryEntries(nextResult),
       );

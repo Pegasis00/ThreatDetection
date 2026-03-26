@@ -2,6 +2,8 @@ import { resolveApiBaseUrl, resolveWsBaseUrl } from './runtime';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = Number.parseInt(import.meta.env.VITE_API_TIMEOUT_MS || '15000', 10);
 const HEALTH_REQUEST_TIMEOUT_MS = Math.min(DEFAULT_REQUEST_TIMEOUT_MS, 5000);
+const VIOLENCE_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_REQUEST_TIMEOUT_MS, 45000);
+const MULTI_MODEL_REQUEST_TIMEOUT_MS = Math.max(DEFAULT_REQUEST_TIMEOUT_MS, 60000);
 
 function buildFormData(fields) {
   const formData = new FormData();
@@ -92,6 +94,7 @@ export async function fetchHealth() {
 export async function detectAnnotated(imageFile, modelName, confidenceThreshold = 0.25) {
   return requestJson('/detect/annotated', {
     method: 'POST',
+    timeoutMs: modelName === 'violence' ? VIOLENCE_REQUEST_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
     body: buildFormData({
       image: imageFile,
       model_name: modelName,
@@ -114,6 +117,7 @@ export async function detectBatch(
 
   return requestJson('/detect/batch', {
     method: 'POST',
+    timeoutMs: modelName === 'violence' ? MULTI_MODEL_REQUEST_TIMEOUT_MS : DEFAULT_REQUEST_TIMEOUT_MS,
     body: formData,
   });
 }

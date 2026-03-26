@@ -1,13 +1,13 @@
 # Pegasusxz - AI Surveillance Dashboard
 
-Real-time threat and hazard detection with a FastAPI backend, YOLO models, and a React/Vite operator console.
+Real-time threat, hazard, and violence detection with a FastAPI backend, local models, and a React/Vite operator console.
 
 ## Stack
 
 | Layer | Technology |
 | --- | --- |
 | Backend | FastAPI + Python 3.10+ |
-| Models | Ultralytics YOLO |
+| Models | Ultralytics YOLO + TensorFlow/Keras |
 | Image processing | OpenCV |
 | Frontend | React 19 + Vite |
 | Styling | CSS + Tailwind runtime import |
@@ -76,6 +76,7 @@ Model files are auto-discovered from `backend/models/`:
 
 - Weapon model: `weapon.pt` or `02032026.pt`
 - Smoke/fire model: `smokefire.pt` or `firesmoke.pt`
+- Violence model: `violence_model.h5` from `backend/models/` or `VIOLENCE/`
 
 The current repo already includes the `.pt` model files, so teammates do not need to download them separately after cloning.
 
@@ -83,6 +84,7 @@ You can also override paths with environment variables:
 
 - `Pegasusxz_WEAPON_MODEL`
 - `Pegasusxz_SMOKEFIRE_MODEL`
+- `Pegasusxz_VIOLENCE_MODEL`
 
 Start the backend:
 
@@ -108,6 +110,7 @@ curl http://localhost:8000/health
 | --- | --- | --- |
 | `Pegasusxz_WEAPON_MODEL` | auto-detected | Absolute or relative path to the weapon model |
 | `Pegasusxz_SMOKEFIRE_MODEL` | auto-detected | Absolute or relative path to the smoke/fire model |
+| `Pegasusxz_VIOLENCE_MODEL` | auto-detected | Absolute or relative path to the violence `.h5` model |
 | `Pegasusxz_CORS_ORIGINS` | `*` | Comma-separated CORS origins if you want to lock the API down |
 | `Pegasusxz_MAX_UPLOAD_BYTES` | `8388608` | Max size for a single uploaded image in bytes |
 | `Pegasusxz_MAX_BATCH_IMAGES` | `10` | Max images accepted by `/detect/batch` |
@@ -165,6 +168,13 @@ Multipart form fields:
 - `image`
 - `confidence_threshold`
 
+### `POST /detect/violence`
+
+Multipart form fields:
+
+- `image`
+- `confidence_threshold`
+
 ### `POST /detect/annotated`
 
 Multipart form fields:
@@ -205,6 +215,10 @@ curl -X POST http://localhost:8000/detect/weapon \
 curl -X POST http://localhost:8000/detect/smokefire \
   -F "image=@test.jpg"
 
+# Violence detection
+curl -X POST http://localhost:8000/detect/violence \
+  -F "image=@test.jpg"
+
 # Annotated image
 curl -X POST http://localhost:8000/detect/annotated \
   -F "image=@test.jpg" \
@@ -215,14 +229,14 @@ curl -X POST http://localhost:8000/detect/annotated \
 curl -X POST http://localhost:8000/detect/batch \
   -F "images=@frame1.jpg" \
   -F "images=@frame2.jpg" \
-  -F "model_name=smokefire" \
+  -F "model_name=violence" \
   -F "include_annotations=true"
 ```
 
 ## WebSocket Test Client
 
 ```bash
-python backend/test_ws_client.py --model weapon --image test.jpg --frames 5
+python backend/test_ws_client.py --model violence --image test.jpg --frames 20
 ```
 
 ## Frontend Pages
@@ -253,7 +267,7 @@ python backend/test_ws_client.py --model weapon --image test.jpg --frames 5
 ### Production Checklist
 
 - Copy `backend/.env.example` and `frontend/.env.example` into real environment variables on your host.
-- Confirm `/health` reports both models as loaded after deploy.
+- Confirm `/health` reports all three models as loaded after deploy.
 - Test camera access over HTTPS if you plan to use the live feed outside localhost.
 - Keep `frontend/node_modules`, `frontend/dist`, and local logs out of version control using the included `.gitignore`.
 

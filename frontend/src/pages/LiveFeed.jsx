@@ -1,27 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import {
+  getSelectionDisplayLabel,
+  getModelTone,
+  hasSelectedModels,
+  isMultiModelSelection,
+  MODEL_META,
+  SINGLE_MODELS,
+  toggleModelSelection,
+} from '../utils/models';
+import {
   addDetectionHistoryEntries,
   createClientId,
-  readDefaultModel,
+  readDefaultModelSelection,
   readLiveConfidence,
   writeLiveConfidence,
 } from '../utils/runtime';
 
 const OVERLAY_TTL_MS = 1500;
-
-const MODEL_META = {
-  smokefire: {
-    beep: 760,
-    label: 'Hazard',
-    tone: '#ffb454',
-  },
-  weapon: {
-    beep: 1180,
-    label: 'Threat',
-    tone: '#ff6b57',
-  },
-};
 
 function getAudioContextCtor() {
   if (typeof window === 'undefined') {
@@ -31,15 +27,25 @@ function getAudioContextCtor() {
   return window.AudioContext || window.webkitAudioContext || null;
 }
 
-function getActiveModels(mode) {
-  return mode === 'both' ? ['weapon', 'smokefire'] : [mode];
+function createEmptyDetectionState() {
+  return Object.fromEntries(
+    SINGLE_MODELS.map((model) => [model, { detections: [], inference: null, timestamp: 0 }]),
+  );
 }
 
-function createEmptyDetectionState() {
-  return {
-    smokefire: { detections: [], inference: null, timestamp: 0 },
-    weapon: { detections: [], inference: null, timestamp: 0 },
-  };
+function createEmptyInferenceState() {
+  return Object.fromEntries(SINGLE_MODELS.map((model) => [model, null]));
+}
+
+function getAlertType(activeModels, detectionState) {
+  if (activeModels.some((model) => getModelTone(model) === 'danger' && detectionState[model].detections.length)) {
+    return 'danger';
+  }
+  if (activeModels.some((model) => getModelTone(model) === 'warning' && detectionState[model].detections.length)) {
+    return 'warning';
+  }
+
+  return null;
 }
 
 export default function LiveFeed() {
@@ -54,11 +60,11 @@ export default function LiveFeed() {
   const audioContextRef = useRef(null);
   const latestDetectionsRef = useRef(createEmptyDetectionState());
 
-  const [model, setModel] = useState(readDefaultModel());
+  const [selectedModels, setSelectedModels] = useState(readDefaultModelSelection());
   const [confidence, setConfidence] = useState(readLiveConfidence());
   const [active, setActive] = useState(false);
   const [fps, setFps] = useState(0);
-  const [latestInferenceMs, setLatestInferenceMs] = useState({ smokefire: null, weapon: null });
+  const [latestInferenceMs, setLatestInferenceMs] = useState(createEmptyInferenceState);
   const [detectionCount, setDetectionCount] = useState(0);
   const [alertType, setAlertType] = useState(null);
   const [log, setLog] = useState([]);
@@ -66,7 +72,7 @@ export default function LiveFeed() {
   const [cameras, setCameras] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState('');
 
-  const activeModels = useMemo(() => getActiveModels(model), [model]);
+  const activeModels = useMemo(() => selectedModels, [selectedModels]);
   const secureContext = useMemo(() => {
     if (typeof window === 'undefined') {
       return true;
@@ -131,18 +137,11 @@ export default function LiveFeed() {
       [payload.model]: payload.inference_time_ms ?? null,
     }));
 
-    const combinedActiveDetections = getActiveModels(model).flatMap(
+    const combinedActiveDetections = activeModels.flatMap(
       (activeModel) => latestDetectionsRef.current[activeModel].detections,
     );
     setDetectionCount(combinedActiveDetections.length);
-
-    if (getActiveModels(model).includes('weapon') && latestDetectionsRef.current.weapon.detections.length) {
-      setAlertType('danger');
-    } else if (getActiveModels(model).includes('smokefire') && latestDetectionsRef.current.smokefire.detections.length) {
-      setAlertType('warning');
-    } else {
-      setAlertType(null);
-    }
+    setAlertType(getAlertType(activeModels, latestDetectionsRef.current));
 
     if (!detections.length) {
       return;
@@ -177,7 +176,7 @@ export default function LiveFeed() {
       },
       ...entries.slice(0, 23),
     ]);
-  }, [model, playBeep]);
+  }, [activeModels, playBeep]);
 
   const {
     connect: connectWeapon,
@@ -193,15 +192,24 @@ export default function LiveFeed() {
     error: hazardError,
     sendFrame: sendHazardFrame,
   } = useWebSocket('smokefire', confidence, handleDetection);
+  const {
+    connect: connectViolence,
+    connected: violenceConnected,
+    disconnect: disconnectViolence,
+    error: violenceError,
+    sendFrame: sendViolenceFrame,
+  } = useWebSocket('violence', confidence, handleDetection);
 
   const connectedCount = [
     activeModels.includes('weapon') && weaponConnected,
     activeModels.includes('smokefire') && hazardConnected,
+    activeModels.includes('violence') && violenceConnected,
   ].filter(Boolean).length;
   const connected = activeModels.length > 0 && connectedCount === activeModels.length;
   const wsError = [
     activeModels.includes('weapon') ? weaponError : null,
     activeModels.includes('smokefire') ? hazardError : null,
+    activeModels.includes('violence') ? violenceError : null,
   ]
     .filter(Boolean)
     .join(' | ');
@@ -211,14 +219,7 @@ export default function LiveFeed() {
       (activeModel) => latestDetectionsRef.current[activeModel].detections,
     );
     setDetectionCount(visibleDetections.length);
-
-    if (activeModels.includes('weapon') && latestDetectionsRef.current.weapon.detections.length) {
-      setAlertType('danger');
-    } else if (activeModels.includes('smokefire') && latestDetectionsRef.current.smokefire.detections.length) {
-      setAlertType('warning');
-    } else {
-      setAlertType(null);
-    }
+    setAlertType(getAlertType(activeModels, latestDetectionsRef.current));
   }, [activeModels]);
 
   const refreshCameras = useCallback(async (requestPermission = false) => {
@@ -256,6 +257,7 @@ export default function LiveFeed() {
     if (!active) {
       disconnectWeapon();
       disconnectHazard();
+      disconnectViolence();
       return undefined;
     }
 
@@ -271,16 +273,25 @@ export default function LiveFeed() {
       disconnectHazard();
     }
 
+    if (activeModels.includes('violence')) {
+      connectViolence();
+    } else {
+      disconnectViolence();
+    }
+
     return () => {
       disconnectWeapon();
       disconnectHazard();
+      disconnectViolence();
     };
   }, [
     active,
     activeModels,
     connectHazard,
+    connectViolence,
     connectWeapon,
     disconnectHazard,
+    disconnectViolence,
     disconnectWeapon,
   ]);
 
@@ -327,12 +338,12 @@ export default function LiveFeed() {
         }
 
         const overlayAlpha = Math.max(0, 1 - overlayAge / OVERLAY_TTL_MS);
-        const tone = MODEL_META[activeModel].tone;
+        const tone = MODEL_META[activeModel].canvasTone;
         context.globalAlpha = overlayAlpha;
 
         entry.detections.forEach((detection) => {
           const [x1, y1, x2, y2] = detection.bbox || [0, 0, 0, 0];
-          const prefix = model === 'both' ? `${MODEL_META[activeModel].label.toUpperCase()} ` : '';
+          const prefix = isMultiModelSelection(selectedModels) ? `${MODEL_META[activeModel].label.toUpperCase()} ` : '';
           const label = `${prefix}${String(detection.class || 'target').toUpperCase()} ${Math.round((detection.confidence || 0) * 100)}%`;
           const labelWidth = context.measureText(label).width + 18;
 
@@ -363,6 +374,9 @@ export default function LiveFeed() {
             if (activeModels.includes('smokefire')) {
               sendHazardFrame(buffer);
             }
+            if (activeModels.includes('violence')) {
+              sendViolenceFrame(buffer);
+            }
           });
         }, 'image/jpeg', 0.72);
       }
@@ -382,8 +396,9 @@ export default function LiveFeed() {
   }, [
     active,
     activeModels,
-    model,
+    selectedModels,
     sendHazardFrame,
+    sendViolenceFrame,
     sendWeaponFrame,
   ]);
 
@@ -400,6 +415,11 @@ export default function LiveFeed() {
     setCameraError(null);
 
     try {
+      if (!hasSelectedModels(selectedModels)) {
+        setCameraError('Select at least one model before starting the live feed.');
+        return;
+      }
+
       await ensureAudioContext();
       streamRef.current?.getTracks().forEach((track) => track.stop());
 
@@ -445,7 +465,7 @@ export default function LiveFeed() {
     setAlertType(null);
     setDetectionCount(0);
     setFps(0);
-    setLatestInferenceMs({ smokefire: null, weapon: null });
+    setLatestInferenceMs(createEmptyInferenceState());
     latestDetectionsRef.current = createEmptyDetectionState();
     frameCountRef.current = 0;
     lastSendRef.current = 0;
@@ -483,14 +503,19 @@ export default function LiveFeed() {
         <div>
           <h1 className="page-title">Watch the camera feed and catch detections in real time.</h1>
           <p className="page-copy">
-            Run one model or both together, without leaving the stream.
+            Run one model or stack multiple engines, without leaving the stream.
           </p>
         </div>
         <div className="header-actions">
           <button type="button" className="btn btn-secondary" onClick={() => refreshCameras(true)}>
             Refresh cameras
           </button>
-          <button type="button" className={`btn ${active ? 'btn-danger' : 'btn-primary'}`} onClick={active ? stopFeed : startFeed}>
+          <button
+            type="button"
+            className={`btn ${active ? 'btn-danger' : 'btn-primary'}`}
+            onClick={active ? stopFeed : startFeed}
+            disabled={!active && !hasSelectedModels(selectedModels)}
+          >
             {active ? 'Stop live feed' : 'Start live feed'}
           </button>
         </div>
@@ -522,7 +547,7 @@ export default function LiveFeed() {
             <div className="feed-hud feed-hud--left">
               <span className={`status-pill ${connected ? 'is-online' : 'is-offline'}`}>
                 <span className="status-pill__dot" />
-                {model === 'both' ? `${connectedCount}/${activeModels.length} linked` : connected ? 'streaming' : 'connecting'}
+                {isMultiModelSelection(selectedModels) ? `${connectedCount}/${activeModels.length} linked` : connected ? 'streaming' : 'connecting'}
               </span>
               <span className="status-pill">
                 <span className="status-pill__dot" />
@@ -541,8 +566,8 @@ export default function LiveFeed() {
           <div className="feed-footer">
             <div className="result-meta">
               <div>
-                <span>Mode</span>
-                <strong>{model === 'both' ? 'Both' : MODEL_META[model].label}</strong>
+                <span>Models</span>
+                <strong>{getSelectionDisplayLabel(selectedModels)}</strong>
               </div>
               <div>
                 <span>Confidence</span>
@@ -595,17 +620,21 @@ export default function LiveFeed() {
             </div>
 
             <div className="toggle-row toggle-row--triple">
-              {['weapon', 'smokefire', 'both'].map((option) => (
+              {SINGLE_MODELS.map((option) => (
                 <button
                   key={option}
                   type="button"
-                  className={`toggle-button ${model === option ? 'is-active' : ''}`}
-                  onClick={() => setModel(option)}
+                  className={`toggle-button ${selectedModels.includes(option) ? 'is-active' : ''}`}
+                  onClick={() => setSelectedModels((current) => toggleModelSelection(current, option))}
                 >
-                  {option === 'weapon' ? 'Threat' : option === 'smokefire' ? 'Hazard' : 'Both'}
+                  {MODEL_META[option].buttonLabel}
                 </button>
               ))}
             </div>
+
+            {!hasSelectedModels(selectedModels) ? (
+              <div className="notice notice-warning">Select at least one model to stream detections.</div>
+            ) : null}
 
             <label className="field-group">
               <div className="field-group__label-row">

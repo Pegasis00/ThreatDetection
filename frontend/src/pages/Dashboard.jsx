@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import ModelBadge from '../components/ModelBadge';
 import { useRuntimeSignal } from '../hooks/useRuntimeSignal';
 import { fetchHealth, getResolvedApiUrl } from '../utils/api';
+import { MODEL_META, SINGLE_MODELS } from '../utils/models';
 import { getDetectionHistory } from '../utils/runtime';
 
 function MetricCard({ label, value, hint, tone = 'neutral' }) {
@@ -62,18 +63,18 @@ export default function Dashboard() {
   }, [runtimeSignal]);
 
   const metrics = useMemo(() => {
-    const weaponHits = history.filter((entry) => entry.model === 'weapon').length;
-    const smokefireHits = history.filter((entry) => entry.model === 'smokefire').length;
+    const counts = Object.fromEntries(
+      SINGLE_MODELS.map((model) => [model, history.filter((entry) => entry.model === model).length]),
+    );
     const averageInference = history.length
       ? `${Math.round(history.reduce((total, entry) => total + (entry.inferenceMs || 0), 0) / history.length)} ms`
       : 'n/a';
 
     return {
       averageInference,
+      counts,
       recent: history.slice(0, 8),
-      smokefireHits,
       total: history.length,
-      weaponHits,
     };
   }, [history]);
 
@@ -101,14 +102,12 @@ export default function Dashboard() {
         </div>
         <div className="overview-hero__aside">
           <div className="signal-stack">
-            <div>
-              <span>Threat model</span>
-              <strong>{health?.models?.weapon?.loaded ? 'online' : 'offline'}</strong>
-            </div>
-            <div>
-              <span>Hazard model</span>
-              <strong>{health?.models?.smokefire?.loaded ? 'online' : 'offline'}</strong>
-            </div>
+            {SINGLE_MODELS.map((model) => (
+              <div key={model}>
+                <span>{MODEL_META[model].label} model</span>
+                <strong>{health?.models?.[model]?.loaded ? 'online' : 'offline'}</strong>
+              </div>
+            ))}
             <div>
               <span>Logged events</span>
               <strong>{metrics.total}</strong>
@@ -123,18 +122,15 @@ export default function Dashboard() {
           value={metrics.total}
           hint="Rolling local history"
         />
-        <MetricCard
-          label="Threat hits"
-          value={metrics.weaponHits}
-          hint="Weapon detections"
-          tone="danger"
-        />
-        <MetricCard
-          label="Hazard hits"
-          value={metrics.smokefireHits}
-          hint="Smoke and fire detections"
-          tone="warning"
-        />
+        {SINGLE_MODELS.map((model) => (
+          <MetricCard
+            key={model}
+            label={`${MODEL_META[model].label} hits`}
+            value={metrics.counts[model]}
+            hint={`${MODEL_META[model].label} detections`}
+            tone={MODEL_META[model].tone}
+          />
+        ))}
         <MetricCard
           label="Average inference"
           value={metrics.averageInference}
@@ -144,18 +140,15 @@ export default function Dashboard() {
       </section>
 
       <section className="two-column-grid">
-        <StatusSummary
-          title="Threat engine"
-          model="weapon"
-          loaded={Boolean(health?.models?.weapon?.loaded)}
-          error={health?.models?.weapon?.error}
-        />
-        <StatusSummary
-          title="Hazard engine"
-          model="smokefire"
-          loaded={Boolean(health?.models?.smokefire?.loaded)}
-          error={health?.models?.smokefire?.error}
-        />
+        {SINGLE_MODELS.map((model) => (
+          <StatusSummary
+            key={model}
+            title={`${MODEL_META[model].label} engine`}
+            model={model}
+            loaded={Boolean(health?.models?.[model]?.loaded)}
+            error={health?.models?.[model]?.error}
+          />
+        ))}
       </section>
 
       {healthError ? <div className="notice notice-warning">{healthError}</div> : null}

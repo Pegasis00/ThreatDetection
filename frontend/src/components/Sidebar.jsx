@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useRuntimeSignal } from '../hooks/useRuntimeSignal';
 import { fetchHealth } from '../utils/api';
+import { MODEL_META, SINGLE_MODELS } from '../utils/models';
 
 const NAV_ITEMS = [
   {
@@ -88,9 +89,10 @@ function ModelStatus({ label, online }) {
 
 export default function Sidebar({ open, onClose, onNavigate }) {
   const runtimeSignal = useRuntimeSignal();
+  const emptyModels = Object.fromEntries(SINGLE_MODELS.map((model) => [model, null]));
   const [health, setHealth] = useState({
     service: 'checking',
-    models: { weapon: null, smokefire: null },
+    models: emptyModels,
   });
 
   useEffect(() => {
@@ -105,16 +107,15 @@ export default function Sidebar({ open, onClose, onNavigate }) {
 
         setHealth({
           service: result.status === 'ok' ? 'online' : 'degraded',
-          models: {
-            weapon: Boolean(result?.models?.weapon?.loaded),
-            smokefire: Boolean(result?.models?.smokefire?.loaded),
-          },
+          models: Object.fromEntries(
+            SINGLE_MODELS.map((model) => [model, Boolean(result?.models?.[model]?.loaded)]),
+          ),
         });
       } catch {
         if (active) {
           setHealth({
             service: 'offline',
-            models: { weapon: false, smokefire: false },
+            models: Object.fromEntries(SINGLE_MODELS.map((model) => [model, false])),
           });
         }
       }
@@ -190,8 +191,9 @@ export default function Sidebar({ open, onClose, onNavigate }) {
             </span>
           </div>
           <div className="sidebar-status-list">
-            <ModelStatus label="Threat" online={Boolean(health.models.weapon)} />
-            <ModelStatus label="Hazard" online={Boolean(health.models.smokefire)} />
+            {SINGLE_MODELS.map((model) => (
+              <ModelStatus key={model} label={MODEL_META[model].label} online={Boolean(health.models[model])} />
+            ))}
           </div>
         </div>
       </div>

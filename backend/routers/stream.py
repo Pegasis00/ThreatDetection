@@ -4,6 +4,7 @@ from time import perf_counter
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 
 try:
+    from ..models.violence import create_sequence_state
     from .detect import (
         DEFAULT_CONFIDENCE,
         _read_int_env,
@@ -13,7 +14,8 @@ try:
         sanitize_confidence_threshold,
     )
 except ImportError:  # pragma: no cover
-    from detect import (
+    from models.violence import create_sequence_state
+    from routers.detect import (
         DEFAULT_CONFIDENCE,
         _read_int_env,
         decode_image_bytes,
@@ -42,6 +44,7 @@ async def stream_detections(
     await websocket.accept()
 
     latest_frame: bytes | None = None
+    sequence_state = create_sequence_state() if normalized_model_name == "violence" else None
     frame_ready = asyncio.Event()
     disconnected = asyncio.Event()
 
@@ -92,6 +95,7 @@ async def stream_detections(
                     decoded_image,
                     normalized_model_name,
                     normalized_confidence,
+                    sequence_state=sequence_state,
                 )
                 await websocket.send_json(result)
                 processed_frames += 1

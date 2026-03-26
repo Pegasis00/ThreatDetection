@@ -10,7 +10,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Simple WebSocket test client for /ws/stream/{model_name}.")
     parser.add_argument(
         "--model",
-        choices=["weapon", "smokefire"],
+        choices=["weapon", "smokefire", "violence"],
         default="weapon",
         help="Model stream to test.",
     )

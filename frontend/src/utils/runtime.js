@@ -1,3 +1,5 @@
+import { normalizeModelSelection, serializeModelSelection } from './models';
+
 const API_URL_KEY = 'Pegasusxz_api_url';
 const DEFAULT_MODEL_KEY = 'Pegasusxz_default_model';
 const DEFAULT_CONFIDENCE_KEY = 'Pegasusxz_default_conf';
@@ -8,8 +10,6 @@ const MAX_HISTORY = 50;
 const DEFAULT_API_PORT = import.meta.env.VITE_API_PORT || '8000';
 const MIN_CONFIDENCE = 0.05;
 const MAX_CONFIDENCE = 0.95;
-const SUPPORTED_MODELS = new Set(['weapon', 'smokefire', 'both']);
-
 let runtimeVersion = 0;
 
 function hasWindow() {
@@ -92,10 +92,6 @@ export function parseConfiguredApiUrl(url) {
   }
 }
 
-function normalizeModel(model, fallback = 'weapon') {
-  return SUPPORTED_MODELS.has(model) ? model : fallback;
-}
-
 function inferDefaultApiUrl() {
   if (!hasWindow()) {
     return `http://localhost:${DEFAULT_API_PORT}`;
@@ -133,12 +129,12 @@ export function resolveWsBaseUrl(apiBaseUrl = resolveApiBaseUrl()) {
   return apiBaseUrl;
 }
 
-export function readDefaultModel() {
-  return normalizeModel(readStringPreference(DEFAULT_MODEL_KEY, 'weapon'));
+export function readDefaultModelSelection() {
+  return normalizeModelSelection(readStringPreference(DEFAULT_MODEL_KEY, 'weapon'));
 }
 
-export function writeDefaultModel(model) {
-  writePreference(DEFAULT_MODEL_KEY, normalizeModel(model, 'weapon'));
+export function writeDefaultModelSelection(selection) {
+  writePreference(DEFAULT_MODEL_KEY, serializeModelSelection(normalizeModelSelection(selection)));
 }
 
 export function readDefaultConfidence() {

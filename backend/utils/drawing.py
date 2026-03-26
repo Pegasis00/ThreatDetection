@@ -9,12 +9,17 @@ except ImportError:  # pragma: no cover
 
 WEAPON_COLOR = (0, 0, 255)
 SMOKEFIRE_COLOR = (0, 140, 255)
+VIOLENCE_COLOR = (214, 82, 147)
 TEXT_COLOR = (255, 255, 255)
 FONT = cv2.FONT_HERSHEY_SIMPLEX if cv2 is not None else 0
 
 
 def _resolve_color(model_name: str) -> tuple[int, int, int]:
-    return WEAPON_COLOR if model_name == "weapon" else SMOKEFIRE_COLOR
+    if model_name == "weapon":
+        return WEAPON_COLOR
+    if model_name == "violence":
+        return VIOLENCE_COLOR
+    return SMOKEFIRE_COLOR
 
 
 def draw_annotated_image_base64(

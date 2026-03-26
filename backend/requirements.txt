@@ -1,7 +1,8 @@
 fastapi==0.133.0
 uvicorn==0.41.0
 ultralytics==8.4.27
-opencv-python==4.13.0.88
+tensorflow==2.21.0
+opencv-python==4.13.0.92
 python-multipart==0.0.22
 websockets==15.0.1
 pillow==12.1.1

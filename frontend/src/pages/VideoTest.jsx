@@ -4,13 +4,17 @@ import {
   addDetectionHistoryEntries,
   createClientId,
   readDefaultConfidence,
-  readDefaultModel,
+  readDefaultModelSelection,
 } from '../utils/runtime';
-
-const MODEL_META = {
-  smokefire: { label: 'Hazard' },
-  weapon: { label: 'Threat' },
-};
+import {
+  buildCombinedResult,
+  getModelTone,
+  hasSelectedModels,
+  isMultiModelSelection,
+  MODEL_META,
+  SINGLE_MODELS,
+  toggleModelSelection,
+} from '../utils/models';
 
 function extractFrame(video, time) {
   return new Promise((resolve, reject) => {
@@ -44,34 +48,16 @@ function extractFrame(video, time) {
 }
 
 function resultTone(detections) {
-  return detections.some((item) => item.model === 'weapon' || item.class === 'gun' || item.class === 'knife')
+  return detections.some((item) => getModelTone(item.model) === 'danger')
     ? 'danger'
     : 'warning';
-}
-
-function combineFrameResults(weaponResult, smokefireResult) {
-  return {
-    detections: [
-      ...(weaponResult.detections || []).map((detection) => ({ ...detection, model: 'weapon' })),
-      ...(smokefireResult.detections || []).map((detection) => ({ ...detection, model: 'smokefire' })),
-    ],
-    image_size: weaponResult.image_size || smokefireResult.image_size,
-    inference_time_ms: Number(
-      ((weaponResult.inference_time_ms || 0) + (smokefireResult.inference_time_ms || 0)).toFixed(2),
-    ),
-    mode: 'both',
-    results: [
-      { ...weaponResult, mode: 'single' },
-      { ...smokefireResult, mode: 'single' },
-    ],
-  };
 }
 
 function buildDetectionSummary(frame) {
   return (frame.detections || [])
     .map((detection) =>
-      frame.mode === 'both'
-        ? `${detection.model === 'weapon' ? 'T' : 'H'}:${detection.class}`
+      frame.mode === 'multi'
+        ? `${MODEL_META[detection.model]?.shortLabel || detection.model}:${detection.class}`
         : detection.class,
     )
     .join(', ');
@@ -81,7 +67,7 @@ export default function VideoTest() {
   const [videoFile, setVideoFile] = useState(null);
   const [videoUrl, setVideoUrl] = useState('');
   const [videoDuration, setVideoDuration] = useState(0);
-  const [model, setModel] = useState(readDefaultModel());
+  const [selectedModels, setSelectedModels] = useState(readDefaultModelSelection());
   const [confidence, setConfidence] = useState(readDefaultConfidence());
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -144,21 +130,23 @@ export default function VideoTest() {
 
         const files = frames.map(({ blob, time }) => new File([blob], `frame_${time.toFixed(1)}s.jpg`, { type: 'image/jpeg' }));
 
-        if (model === 'both') {
-          const [weaponResponse, smokefireResponse] = await Promise.all([
-            detectBatch(files, 'weapon', confidence, true),
-            detectBatch(files, 'smokefire', confidence, true),
-          ]);
+        if (isMultiModelSelection(selectedModels)) {
+          const modelResponses = await Promise.all(
+            selectedModels.map((activeModel) => detectBatch(files, activeModel, confidence, true)),
+          );
 
           frames.forEach((frame, frameIndex) => {
             collected.push({
-              ...combineFrameResults(weaponResponse[frameIndex], smokefireResponse[frameIndex]),
+              ...buildCombinedResult(
+                modelResponses.map((response) => response[frameIndex]),
+                selectedModels,
+              ),
               filename: files[frameIndex].name,
               time: frame.time,
             });
           });
         } else {
-          const response = await detectBatch(files, model, confidence, true);
+          const response = await detectBatch(files, selectedModels[0], confidence, true);
           response.forEach((result, responseIndex) => {
             collected.push({
               mode: 'single',
@@ -174,7 +162,7 @@ export default function VideoTest() {
       const orderedResults = collected.sort((a, b) => a.time - b.time);
       addDetectionHistoryEntries(
         orderedResults.flatMap((entry) =>
-          entry.mode === 'both'
+          entry.mode === 'multi'
             ? entry.results.flatMap((result) =>
                 (result.detections || []).map((detection) => ({
                   bbox: detection.bbox,
@@ -204,7 +192,7 @@ export default function VideoTest() {
     } finally {
       setProcessing(false);
     }
-  }, [confidence, model, videoFile]);
+  }, [confidence, selectedModels, videoFile]);
 
   return (
     <div className="page">
@@ -212,7 +200,7 @@ export default function VideoTest() {
         <div>
           <h1 className="page-title">Sample the video, batch the frames, and inspect where detections appear over time.</h1>
           <p className="page-copy">
-            Run one model or both together, then jump to the exact frames that triggered a hit.
+            Run one model or stack multiple engines, then jump to the exact frames that triggered a hit.
           </p>
         </div>
       </header>
@@ -253,15 +241,15 @@ export default function VideoTest() {
               <span>Mode</span>
             </div>
             <div className="toggle-row toggle-row--triple">
-              {['weapon', 'smokefire', 'both'].map((option) => (
+              {SINGLE_MODELS.map((option) => (
                 <button
                   key={option}
                   type="button"
-                  className={`toggle-button ${model === option ? 'is-active' : ''}`}
-                  onClick={() => setModel(option)}
+                  className={`toggle-button ${selectedModels.includes(option) ? 'is-active' : ''}`}
+                  onClick={() => setSelectedModels((current) => toggleModelSelection(current, option))}
                   disabled={processing}
                 >
-                  {option === 'weapon' ? 'Threat' : option === 'smokefire' ? 'Hazard' : 'Both'}
+                  {MODEL_META[option].buttonLabel}
                 </button>
               ))}
             </div>
@@ -308,8 +296,12 @@ export default function VideoTest() {
           </div>
         ) : null}
 
-        <button type="button" className="btn btn-primary" onClick={processVideo} disabled={!videoFile || processing}>
-          {processing ? 'Processing video...' : model === 'both' ? 'Run both models' : 'Run video scan'}
+        {!hasSelectedModels(selectedModels) ? (
+          <div className="notice notice-warning">Select at least one model before processing the video.</div>
+        ) : null}
+
+        <button type="button" className="btn btn-primary" onClick={processVideo} disabled={!videoFile || processing || !hasSelectedModels(selectedModels)}>
+          {processing ? 'Processing video...' : isMultiModelSelection(selectedModels) ? 'Run selected models' : 'Run video scan'}
         </button>
 
         {error ? <div className="notice notice-error">{error}</div> : null}
@@ -383,21 +375,19 @@ export default function VideoTest() {
             </div>
           </div>
 
-          {selectedFrame?.mode === 'both' ? (
+          {selectedFrame?.mode === 'multi' ? (
             <>
               <div className="result-meta">
                 <div>
                   <span>Total</span>
                   <strong>{selectedFrame.detections?.length || 0}</strong>
                 </div>
-                <div>
-                  <span>Threat</span>
-                  <strong>{selectedFrame.results[0]?.detections?.length || 0}</strong>
-                </div>
-                <div>
-                  <span>Hazard</span>
-                  <strong>{selectedFrame.results[1]?.detections?.length || 0}</strong>
-                </div>
+                {selectedFrame.results.map((result) => (
+                  <div key={`${selectedFrame.time}-${result.model}-count`}>
+                    <span>{MODEL_META[result.model].label}</span>
+                    <strong>{result.detections?.length || 0}</strong>
+                  </div>
+                ))}
               </div>
 
               <div className="dual-result-grid">
@@ -459,7 +449,10 @@ export default function VideoTest() {
 
               <div className="stack-list">
                 {(selectedFrame.detections || []).map((detection, index) => (
-                  <div key={`${detection.class}-${index}`} className={`notice notice-inline notice-${resultTone([detection])}`}>
+                  <div
+                    key={`${detection.class}-${index}`}
+                    className={`notice notice-inline notice-${resultTone([{ ...detection, model: selectedFrame.model }])}`}
+                  >
                     <span>{detection.class}</span>
                     <strong>{Math.round((detection.confidence || 0) * 100)}%</strong>
                   </div>

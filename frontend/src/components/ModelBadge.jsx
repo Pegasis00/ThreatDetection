@@ -1,10 +1,14 @@
+import { MODEL_META } from '../utils/models';
+
 export default function ModelBadge({ model }) {
-  const isWeapon = model === 'weapon';
+  const badgeClass =
+    model === 'weapon' ? 'badge-weapon' : model === 'violence' ? 'badge-violence' : 'badge-smokefire';
+  const label = MODEL_META[model]?.badgeLabel || `${model} model`;
 
   return (
-    <span className={`badge ${isWeapon ? 'badge-weapon' : 'badge-smokefire'}`}>
+    <span className={`badge ${badgeClass}`}>
       <span className="badge__dot" />
-      {isWeapon ? 'Threat model' : 'Hazard model'}
+      {label}
     </span>
   );
 }

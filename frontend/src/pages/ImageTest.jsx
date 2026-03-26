@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import DetectionBox from '../components/DetectionBox';
 import { useDetection } from '../hooks/useDetection';
-import { readDefaultConfidence, readDefaultModel } from '../utils/runtime';
+import {
+  getSelectionDisplayLabel,
+  hasSelectedModels,
+  isMultiModelSelection,
+  MODEL_META,
+  SINGLE_MODELS,
+  toggleModelSelection,
+} from '../utils/models';
+import { readDefaultConfidence, readDefaultModelSelection } from '../utils/runtime';
 
 function UploadIllustration() {
   return (
@@ -16,14 +24,14 @@ function UploadIllustration() {
 export default function ImageTest() {
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
-  const [model, setModel] = useState(readDefaultModel());
+  const [selectedModels, setSelectedModels] = useState(readDefaultModelSelection());
   const [confidence, setConfidence] = useState(readDefaultConfidence());
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef(null);
   const previewUrlRef = useRef('');
   const { error, loading, reset, result, runAnnotated } = useDetection();
-  const isDualMode = model === 'both';
-  const dualResults = result?.mode === 'both' ? result.results : [];
+  const isGroupedMode = isMultiModelSelection(selectedModels);
+  const groupedResults = result?.mode === 'multi' ? result.results : [];
 
   useEffect(() => {
     return () => {
@@ -60,7 +68,7 @@ export default function ImageTest() {
       return;
     }
 
-    await runAnnotated(file, model, confidence);
+    await runAnnotated(file, selectedModels, confidence);
   }
 
   return (
@@ -122,21 +130,21 @@ export default function ImageTest() {
             </div>
 
             <div className="toggle-row toggle-row--triple">
-              {['weapon', 'smokefire', 'both'].map((option) => (
+              {SINGLE_MODELS.map((option) => (
                 <button
                   key={option}
                   type="button"
-                  className={`toggle-button ${model === option ? 'is-active' : ''}`}
-                  onClick={() => setModel(option)}
+                  className={`toggle-button ${selectedModels.includes(option) ? 'is-active' : ''}`}
+                  onClick={() => setSelectedModels((current) => toggleModelSelection(current, option))}
                 >
-                  {option === 'weapon'
-                    ? 'Threat'
-                    : option === 'smokefire'
-                      ? 'Hazard'
-                      : 'Both'}
+                  {MODEL_META[option].buttonLabel}
                 </button>
               ))}
             </div>
+
+            {!hasSelectedModels(selectedModels) ? (
+              <div className="notice notice-warning">Select at least one model to run a scan.</div>
+            ) : null}
 
             <label className="field-group">
               <div className="field-group__label-row">
@@ -154,8 +162,8 @@ export default function ImageTest() {
               />
             </label>
 
-            <button type="button" className="btn btn-primary" disabled={!file || loading} onClick={handleRun}>
-              {loading ? 'Scanning...' : isDualMode ? 'Run both models' : 'Run scan'}
+            <button type="button" className="btn btn-primary" disabled={!file || loading || !hasSelectedModels(selectedModels)} onClick={handleRun}>
+              {loading ? 'Scanning...' : isGroupedMode ? 'Run selected models' : 'Run scan'}
             </button>
           </article>
         </div>
@@ -163,7 +171,9 @@ export default function ImageTest() {
         <article className="surface result-panel">
           <div className="section-header">
             <div>
-              <h2 className="section-title">{result?.mode === 'both' ? 'Both models' : 'Result'}</h2>
+              <h2 className="section-title">
+                {result?.mode === 'multi' ? `${getSelectionDisplayLabel(result.selected_models)} result` : 'Result'}
+              </h2>
             </div>
             {result?.inference_time_ms ? <p className="muted-copy">{result.inference_time_ms} ms</p> : null}
           </div>
@@ -179,30 +189,28 @@ export default function ImageTest() {
 
           {loading ? <div className="skeleton-panel" /> : null}
 
-          {result?.mode === 'both' ? (
+          {result?.mode === 'multi' ? (
             <>
               <div className="result-meta">
                 <div>
                   <span>Total</span>
                   <strong>{result.detections?.length || 0}</strong>
                 </div>
-                <div>
-                  <span>Threat</span>
-                  <strong>{dualResults[0]?.detections?.length || 0}</strong>
-                </div>
-                <div>
-                  <span>Hazard</span>
-                  <strong>{dualResults[1]?.detections?.length || 0}</strong>
-                </div>
+                {groupedResults.map((entry) => (
+                  <div key={`${entry.model}-count`}>
+                    <span>{MODEL_META[entry.model].label}</span>
+                    <strong>{entry.detections?.length || 0}</strong>
+                  </div>
+                ))}
               </div>
 
               <div className="dual-result-grid">
-                {dualResults.map((entry) => (
+                {groupedResults.map((entry) => (
                   <section key={entry.model} className="dual-result-card">
                     <div className="section-header">
                       <div>
                         <h3 className="dual-result-card__title">
-                          {entry.model === 'weapon' ? 'Threat model' : 'Hazard model'}
+                          {MODEL_META[entry.model].badgeLabel}
                         </h3>
                       </div>
                       <p className="muted-copy">{entry.inference_time_ms} ms</p>
@@ -231,7 +239,7 @@ export default function ImageTest() {
                       </div>
                     ) : (
                       <div className="notice notice-success">
-                        No {entry.model === 'weapon' ? 'threat' : 'hazard'} detections.
+                        No {MODEL_META[entry.model].label.toLowerCase()} detections.
                       </div>
                     )}
                   </section>
@@ -258,7 +266,7 @@ export default function ImageTest() {
                 </div>
                 <div>
                   <span>Model</span>
-                  <strong>{result.model === 'weapon' ? 'Threat' : 'Hazard'}</strong>
+                  <strong>{getSelectionDisplayLabel([result.model])}</strong>
                 </div>
                 <div>
                   <span>Image size</span>
@@ -269,7 +277,7 @@ export default function ImageTest() {
               {result.detections?.length ? (
                 <div className="stack-list">
                   {result.detections.map((detection, index) => (
-                    <DetectionBox key={`${detection.class}-${index}`} detection={detection} model={model} />
+                    <DetectionBox key={`${detection.class}-${index}`} detection={detection} model={result.model} />
                   ))}
                 </div>
               ) : (

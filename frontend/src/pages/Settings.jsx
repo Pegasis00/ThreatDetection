@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useRuntimeSignal } from '../hooks/useRuntimeSignal';
 import { getResolvedApiUrl } from '../utils/api';
+import { hasSelectedModels, MODEL_META, SINGLE_MODELS, toggleModelSelection } from '../utils/models';
 import {
   clearConfiguredApiUrl,
   clearDetectionHistory,
@@ -8,16 +9,16 @@ import {
   parseConfiguredApiUrl,
   readConfiguredApiUrl,
   readDefaultConfidence,
-  readDefaultModel,
+  readDefaultModelSelection,
   writeConfiguredApiUrl,
   writeDefaultConfidence,
-  writeDefaultModel,
+  writeDefaultModelSelection,
 } from '../utils/runtime';
 
 export default function Settings() {
   useRuntimeSignal();
   const [apiUrl, setApiUrl] = useState(readConfiguredApiUrl());
-  const [defaultModel, setDefaultModel] = useState(readDefaultModel());
+  const [defaultSelection, setDefaultSelection] = useState(readDefaultModelSelection());
   const [defaultConfidence, setDefaultConfidence] = useState(readDefaultConfidence());
   const [connectionFeedback, setConnectionFeedback] = useState(null);
   const historyCount = getDetectionHistory().length;
@@ -55,9 +56,12 @@ export default function Settings() {
     });
   }
 
-  function handleModelChange(nextModel) {
-    setDefaultModel(nextModel);
-    writeDefaultModel(nextModel);
+  function handleModelToggle(nextModel) {
+    setDefaultSelection((current) => {
+      const nextSelection = toggleModelSelection(current, nextModel);
+      writeDefaultModelSelection(nextSelection);
+      return nextSelection;
+    });
   }
 
   function handleConfidenceChange(nextValue) {
@@ -142,18 +146,22 @@ export default function Settings() {
           </div>
         </div>
 
-        <div className="toggle-row">
-          {['weapon', 'smokefire'].map((option) => (
+        <div className="toggle-row toggle-row--triple">
+          {SINGLE_MODELS.map((option) => (
             <button
               key={option}
               type="button"
-              className={`toggle-button ${defaultModel === option ? 'is-active' : ''}`}
-              onClick={() => handleModelChange(option)}
+              className={`toggle-button ${defaultSelection.includes(option) ? 'is-active' : ''}`}
+              onClick={() => handleModelToggle(option)}
             >
-              {option === 'weapon' ? 'Threat model' : 'Hazard model'}
+              {MODEL_META[option].buttonLabel}
             </button>
           ))}
         </div>
+
+        {!hasSelectedModels(defaultSelection) ? (
+          <div className="notice notice-warning">No startup model is selected right now. The scan pages will open with nothing selected.</div>
+        ) : null}
 
         <label className="field-group">
           <div className="field-group__label-row">
