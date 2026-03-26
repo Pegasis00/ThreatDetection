@@ -18,27 +18,41 @@ import {
 } from '../utils/runtime';
 
 const OVERLAY_TTL_MS = 1500;
-const LOCAL_STREAM_MAX_WIDTH = 960;
+const LOCAL_SINGLE_MODEL_STREAM_INTERVAL_MS = 140;
+const LOCAL_MULTI_MODEL_STREAM_INTERVAL_MS = 240;
+const LOCAL_VIOLENCE_STREAM_INTERVAL_MS = 450;
 const REMOTE_STREAM_MAX_WIDTH = 416;
 const SINGLE_MODEL_STREAM_INTERVAL_MS = 500;
 const MULTI_MODEL_STREAM_INTERVAL_MS = 900;
 const VIOLENCE_STREAM_INTERVAL_MS = 1400;
-const LOCAL_STREAM_JPEG_QUALITY = 0.82;
+const LOCAL_STREAM_JPEG_QUALITY = 0.9;
 const REMOTE_STREAM_JPEG_QUALITY = 0.55;
 
-function getUploadWidth(activeModels, isLocalhost) {
+function getUploadWidth(activeModels) {
   if (activeModels.includes('violence')) {
-    return Math.min(isLocalhost ? LOCAL_STREAM_MAX_WIDTH : REMOTE_STREAM_MAX_WIDTH, 416);
+    return REMOTE_STREAM_MAX_WIDTH;
   }
 
   if (activeModels.length > 1) {
-    return isLocalhost ? LOCAL_STREAM_MAX_WIDTH : 512;
+    return 512;
   }
 
-  return isLocalhost ? LOCAL_STREAM_MAX_WIDTH : REMOTE_STREAM_MAX_WIDTH;
+  return REMOTE_STREAM_MAX_WIDTH;
 }
 
-function getStreamInterval(activeModels) {
+function getStreamInterval(activeModels, isLocalhost) {
+  if (isLocalhost) {
+    if (activeModels.includes('violence')) {
+      return LOCAL_VIOLENCE_STREAM_INTERVAL_MS;
+    }
+
+    if (activeModels.length > 1) {
+      return LOCAL_MULTI_MODEL_STREAM_INTERVAL_MS;
+    }
+
+    return LOCAL_SINGLE_MODEL_STREAM_INTERVAL_MS;
+  }
+
   if (activeModels.includes('violence')) {
     return VIOLENCE_STREAM_INTERVAL_MS;
   }
@@ -109,6 +123,7 @@ export default function LiveFeed() {
   const [cameraError, setCameraError] = useState(null);
   const [cameras, setCameras] = useState([]);
   const [selectedCamera, setSelectedCamera] = useState('');
+  const [previewAspectRatio, setPreviewAspectRatio] = useState(4 / 3);
 
   const activeModels = useMemo(() => selectedModels, [selectedModels]);
   const secureContext = useMemo(() => {
@@ -404,6 +419,10 @@ export default function LiveFeed() {
 
       const width = video.videoWidth || 1280;
       const height = video.videoHeight || 720;
+      const nextAspectRatio = width / Math.max(height, 1);
+      setPreviewAspectRatio((current) =>
+        Math.abs(current - nextAspectRatio) > 0.01 ? nextAspectRatio : current,
+      );
       if (canvas.width !== width) {
         canvas.width = width;
       }
@@ -453,30 +472,31 @@ export default function LiveFeed() {
 
       frameCountRef.current += 1;
       const now = performance.now();
-      const streamInterval = getStreamInterval(activeModels);
+      const streamInterval = getStreamInterval(activeModels, isLocalhost);
       if (!uploadInFlightRef.current && now - lastSendRef.current >= streamInterval) {
         lastSendRef.current = now;
         uploadInFlightRef.current = true;
+        const sourceCanvas = isLocalhost ? canvas : uploadCanvasRef.current || document.createElement('canvas');
+        if (!isLocalhost) {
+          if (!uploadCanvasRef.current) {
+            uploadCanvasRef.current = sourceCanvas;
+          }
 
-        if (!uploadCanvasRef.current) {
-          uploadCanvasRef.current = document.createElement('canvas');
+          const uploadWidth = Math.min(getUploadWidth(activeModels), width);
+          const uploadHeight = Math.max(1, Math.round((height / width) * uploadWidth));
+          sourceCanvas.width = uploadWidth;
+          sourceCanvas.height = uploadHeight;
+
+          const uploadContext = sourceCanvas.getContext('2d');
+          if (!uploadContext) {
+            uploadInFlightRef.current = false;
+            return;
+          }
+
+          uploadContext.drawImage(video, 0, 0, uploadWidth, uploadHeight);
         }
 
-        const uploadCanvas = uploadCanvasRef.current;
-        const uploadWidth = Math.min(getUploadWidth(activeModels, isLocalhost), width);
-        const uploadHeight = Math.max(1, Math.round((height / width) * uploadWidth));
-        uploadCanvas.width = uploadWidth;
-        uploadCanvas.height = uploadHeight;
-
-        const uploadContext = uploadCanvas.getContext('2d');
-        if (!uploadContext) {
-          uploadInFlightRef.current = false;
-          return;
-        }
-
-        uploadContext.drawImage(video, 0, 0, uploadWidth, uploadHeight);
-
-        uploadCanvas.toBlob((blob) => {
+        sourceCanvas.toBlob((blob) => {
           if (!blob) {
             uploadInFlightRef.current = false;
             return;
@@ -674,7 +694,7 @@ export default function LiveFeed() {
 
       <section className="workspace-grid workspace-grid--wide">
         <article className={`surface feed-panel ${alertType ? `feed-panel--${alertType}` : ''}`}>
-          <div className="feed-stage">
+          <div className="feed-stage" style={{ aspectRatio: previewAspectRatio }}>
             <video ref={videoRef} className="feed-video" muted playsInline />
             <canvas ref={canvasRef} className="feed-canvas" />
 
