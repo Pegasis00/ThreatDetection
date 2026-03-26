@@ -48,6 +48,18 @@ async def stream_detections(
     frame_ready = asyncio.Event()
     disconnected = asyncio.Event()
 
+    async def send_json(payload: dict[str, object]) -> bool:
+        if disconnected.is_set():
+            return False
+
+        try:
+            await websocket.send_json(payload)
+            return True
+        except (RuntimeError, WebSocketDisconnect):
+            disconnected.set()
+            frame_ready.set()
+            return False
+
     async def receiver() -> None:
         nonlocal latest_frame
 
@@ -97,24 +109,27 @@ async def stream_detections(
                     normalized_confidence,
                     sequence_state=sequence_state,
                 )
-                await websocket.send_json(result)
+                if not await send_json(result):
+                    break
                 processed_frames += 1
             except HTTPException as exc:
-                await websocket.send_json(
+                if not await send_json(
                     {
                         "model": normalized_model_name,
                         "error": exc.detail,
                         "status_code": exc.status_code,
                     }
-                )
+                ):
+                    break
             except Exception as exc:  # pragma: no cover
-                await websocket.send_json(
+                if not await send_json(
                     {
                         "model": normalized_model_name,
                         "error": str(exc),
                         "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
                     }
-                )
+                ):
+                    break
 
             now = perf_counter()
             elapsed = now - last_log_time
@@ -135,7 +150,10 @@ async def stream_detections(
             if not task.done():
                 task.cancel()
 
+        await asyncio.gather(receiver_task, processor_task, return_exceptions=True)
+
         try:
-            await websocket.close()
-        except RuntimeError:
+            if not disconnected.is_set():
+                await websocket.close()
+        except (RuntimeError, WebSocketDisconnect):
             pass
