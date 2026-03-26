@@ -18,12 +18,13 @@ import {
 } from '../utils/runtime';
 
 const OVERLAY_TTL_MS = 1500;
-const LOCAL_STREAM_MAX_WIDTH = 640;
+const LOCAL_STREAM_MAX_WIDTH = 960;
 const REMOTE_STREAM_MAX_WIDTH = 416;
 const SINGLE_MODEL_STREAM_INTERVAL_MS = 500;
 const MULTI_MODEL_STREAM_INTERVAL_MS = 900;
 const VIOLENCE_STREAM_INTERVAL_MS = 1400;
-const STREAM_JPEG_QUALITY = 0.55;
+const LOCAL_STREAM_JPEG_QUALITY = 0.82;
+const REMOTE_STREAM_JPEG_QUALITY = 0.55;
 
 function getUploadWidth(activeModels, isLocalhost) {
   if (activeModels.includes('violence')) {
@@ -49,6 +50,10 @@ function getStreamInterval(activeModels) {
   return SINGLE_MODEL_STREAM_INTERVAL_MS;
 }
 
+function getStreamJpegQuality(isLocalhost) {
+  return isLocalhost ? LOCAL_STREAM_JPEG_QUALITY : REMOTE_STREAM_JPEG_QUALITY;
+}
+
 function getAudioContextCtor() {
   if (typeof window === 'undefined') {
     return null;
@@ -59,7 +64,7 @@ function getAudioContextCtor() {
 
 function createEmptyDetectionState() {
   return Object.fromEntries(
-    SINGLE_MODELS.map((model) => [model, { detections: [], inference: null, timestamp: 0 }]),
+    SINGLE_MODELS.map((model) => [model, { detections: [], inference: null, imageSize: null, timestamp: 0 }]),
   );
 }
 
@@ -91,6 +96,7 @@ export default function LiveFeed() {
   const fpsTrackerRef = useRef({ frames: 0, lastTime: 0 });
   const audioContextRef = useRef(null);
   const latestDetectionsRef = useRef(createEmptyDetectionState());
+  const activeRef = useRef(false);
 
   const [selectedModels, setSelectedModels] = useState(readDefaultModelSelection());
   const [confidence, setConfidence] = useState(readLiveConfidence());
@@ -119,6 +125,10 @@ export default function LiveFeed() {
 
     return ['localhost', '127.0.0.1'].includes(window.location.hostname);
   }, []);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
 
   const ensureAudioContext = useCallback(async () => {
     const AudioContextCtor = getAudioContextCtor();
@@ -160,7 +170,7 @@ export default function LiveFeed() {
   }, []);
 
   const handleDetection = useCallback((payload) => {
-    if (!payload || payload.error) {
+    if (!activeRef.current || !payload || payload.error) {
       return;
     }
 
@@ -168,6 +178,7 @@ export default function LiveFeed() {
     latestDetectionsRef.current[payload.model] = {
       detections,
       inference: payload.inference_time_ms ?? null,
+      imageSize: payload.image_size ?? null,
       timestamp: performance.now(),
     };
 
@@ -260,6 +271,42 @@ export default function LiveFeed() {
     setDetectionCount(visibleDetections.length);
     setAlertType(getAlertType(activeModels, latestDetectionsRef.current));
   }, [activeModels]);
+
+  useEffect(() => {
+    if (!active) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      const now = performance.now();
+      let changed = false;
+
+      SINGLE_MODELS.forEach((model) => {
+        const entry = latestDetectionsRef.current[model];
+        if (entry.detections.length && now - entry.timestamp >= OVERLAY_TTL_MS) {
+          latestDetectionsRef.current[model] = {
+            ...entry,
+            detections: [],
+          };
+          changed = true;
+        }
+      });
+
+      if (!changed) {
+        return;
+      }
+
+      const visibleDetections = activeModels.flatMap(
+        (activeModel) => latestDetectionsRef.current[activeModel].detections,
+      );
+      setDetectionCount(visibleDetections.length);
+      setAlertType(getAlertType(activeModels, latestDetectionsRef.current));
+    }, 250);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [active, activeModels]);
 
   const refreshCameras = useCallback(async (requestPermission = false) => {
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -378,10 +425,17 @@ export default function LiveFeed() {
 
         const overlayAlpha = Math.max(0, 1 - overlayAge / OVERLAY_TTL_MS);
         const tone = MODEL_META[activeModel].canvasTone;
+        const [sourceWidth, sourceHeight] = entry.imageSize || [width, height];
+        const scaleX = sourceWidth ? width / sourceWidth : 1;
+        const scaleY = sourceHeight ? height / sourceHeight : 1;
         context.globalAlpha = overlayAlpha;
 
         entry.detections.forEach((detection) => {
-          const [x1, y1, x2, y2] = detection.bbox || [0, 0, 0, 0];
+          const [rawX1, rawY1, rawX2, rawY2] = detection.bbox || [0, 0, 0, 0];
+          const x1 = rawX1 * scaleX;
+          const y1 = rawY1 * scaleY;
+          const x2 = rawX2 * scaleX;
+          const y2 = rawY2 * scaleY;
           const prefix = isMultiModelSelection(selectedModels) ? `${MODEL_META[activeModel].label.toUpperCase()} ` : '';
           const label = `${prefix}${String(detection.class || 'target').toUpperCase()} ${Math.round((detection.confidence || 0) * 100)}%`;
           const labelWidth = context.measureText(label).width + 18;
@@ -447,7 +501,7 @@ export default function LiveFeed() {
           }).finally(() => {
             uploadInFlightRef.current = false;
           });
-        }, 'image/jpeg', STREAM_JPEG_QUALITY);
+        }, 'image/jpeg', getStreamJpegQuality(isLocalhost));
       }
 
       fpsTrackerRef.current.frames += 1;
@@ -467,6 +521,7 @@ export default function LiveFeed() {
     activeModels,
     selectedModels,
     sendHazardFrame,
+    isLocalhost,
     sendViolenceFrame,
     sendWeaponFrame,
   ]);
@@ -491,6 +546,14 @@ export default function LiveFeed() {
 
       await ensureAudioContext();
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      latestDetectionsRef.current = createEmptyDetectionState();
+      setLatestInferenceMs(createEmptyInferenceState());
+      setDetectionCount(0);
+      setAlertType(null);
+      setLog([]);
+      frameCountRef.current = 0;
+      lastSendRef.current = 0;
+      uploadInFlightRef.current = false;
 
       const constraints = {
         video: selectedCamera
@@ -535,6 +598,7 @@ export default function LiveFeed() {
     setDetectionCount(0);
     setFps(0);
     setLatestInferenceMs(createEmptyInferenceState());
+    setLog([]);
     latestDetectionsRef.current = createEmptyDetectionState();
     frameCountRef.current = 0;
     lastSendRef.current = 0;
@@ -543,7 +607,14 @@ export default function LiveFeed() {
     streamRef.current = null;
 
     if (videoRef.current) {
+      videoRef.current.pause();
       videoRef.current.srcObject = null;
+    }
+
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const context = canvas.getContext('2d');
+      context?.clearRect(0, 0, canvas.width, canvas.height);
     }
   }
 
