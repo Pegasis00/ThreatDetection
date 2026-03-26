@@ -61,7 +61,7 @@ def _resolve_external_model_path(
 
 WEAPON_MODEL_PATH = _resolve_model_path(
     "Pegasusxz_WEAPON_MODEL",
-    ("weapon.pt", "02032026.pt"),
+    ("gen3_best.pt", "weapon.pt", "02032026.pt"),
 )
 SMOKEFIRE_MODEL_PATH = _resolve_model_path(
     "Pegasusxz_SMOKEFIRE_MODEL",
