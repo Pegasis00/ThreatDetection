@@ -5,6 +5,7 @@ export function useWebSocket(modelName, confidenceThreshold, onMessage) {
   const socketRef = useRef(null);
   const onMessageRef = useRef(onMessage);
   const manualCloseRef = useRef(false);
+  const awaitingResponseRef = useRef(false);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState(null);
 
@@ -16,6 +17,7 @@ export function useWebSocket(modelName, confidenceThreshold, onMessage) {
     const activeSocket = socketRef.current;
     socketRef.current = null;
     manualCloseRef.current = true;
+    awaitingResponseRef.current = false;
 
     if (activeSocket && activeSocket.readyState < WebSocket.CLOSING) {
       activeSocket.close();
@@ -36,10 +38,12 @@ export function useWebSocket(modelName, confidenceThreshold, onMessage) {
     socket.onopen = () => {
       setConnected(true);
       setError(null);
+      awaitingResponseRef.current = false;
     };
 
     socket.onmessage = (event) => {
       try {
+        awaitingResponseRef.current = false;
         const payload = JSON.parse(event.data);
         onMessageRef.current?.(payload);
       } catch {
@@ -48,6 +52,7 @@ export function useWebSocket(modelName, confidenceThreshold, onMessage) {
     };
 
     socket.onerror = () => {
+      awaitingResponseRef.current = false;
       setError('WebSocket connection failed. Check the backend URL and WebSocket proxy configuration.');
     };
 
@@ -55,6 +60,7 @@ export function useWebSocket(modelName, confidenceThreshold, onMessage) {
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
+      awaitingResponseRef.current = false;
       setConnected(false);
 
       if (!manualCloseRef.current && event.code !== 1000) {
@@ -66,9 +72,13 @@ export function useWebSocket(modelName, confidenceThreshold, onMessage) {
   }, [confidenceThreshold, modelName]);
 
   const sendFrame = useCallback((frameBytes) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
+    if (socketRef.current?.readyState === WebSocket.OPEN && !awaitingResponseRef.current) {
+      awaitingResponseRef.current = true;
       socketRef.current.send(frameBytes);
+      return true;
     }
+
+    return false;
   }, []);
 
   useEffect(() => disconnect, [disconnect]);

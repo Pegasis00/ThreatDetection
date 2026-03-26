@@ -122,7 +122,7 @@ export default function Sidebar({ open, onClose, onNavigate }) {
     }
 
     pollHealth();
-    const intervalId = window.setInterval(pollHealth, 15000);
+    const intervalId = window.setInterval(pollHealth, 60000);
 
     return () => {
       active = false;

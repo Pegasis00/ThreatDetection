@@ -18,6 +18,36 @@ import {
 } from '../utils/runtime';
 
 const OVERLAY_TTL_MS = 1500;
+const LOCAL_STREAM_MAX_WIDTH = 640;
+const REMOTE_STREAM_MAX_WIDTH = 416;
+const SINGLE_MODEL_STREAM_INTERVAL_MS = 500;
+const MULTI_MODEL_STREAM_INTERVAL_MS = 900;
+const VIOLENCE_STREAM_INTERVAL_MS = 1400;
+const STREAM_JPEG_QUALITY = 0.55;
+
+function getUploadWidth(activeModels, isLocalhost) {
+  if (activeModels.includes('violence')) {
+    return Math.min(isLocalhost ? LOCAL_STREAM_MAX_WIDTH : REMOTE_STREAM_MAX_WIDTH, 416);
+  }
+
+  if (activeModels.length > 1) {
+    return isLocalhost ? LOCAL_STREAM_MAX_WIDTH : 512;
+  }
+
+  return isLocalhost ? LOCAL_STREAM_MAX_WIDTH : REMOTE_STREAM_MAX_WIDTH;
+}
+
+function getStreamInterval(activeModels) {
+  if (activeModels.includes('violence')) {
+    return VIOLENCE_STREAM_INTERVAL_MS;
+  }
+
+  if (activeModels.length > 1) {
+    return MULTI_MODEL_STREAM_INTERVAL_MS;
+  }
+
+  return SINGLE_MODEL_STREAM_INTERVAL_MS;
+}
 
 function getAudioContextCtor() {
   if (typeof window === 'undefined') {
@@ -51,10 +81,12 @@ function getAlertType(activeModels, detectionState) {
 export default function LiveFeed() {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const uploadCanvasRef = useRef(null);
   const streamRef = useRef(null);
   const animationRef = useRef(0);
   const frameCountRef = useRef(0);
   const lastSendRef = useRef(0);
+  const uploadInFlightRef = useRef(false);
   const beepCooldownRef = useRef(0);
   const fpsTrackerRef = useRef({ frames: 0, lastTime: 0 });
   const audioContextRef = useRef(null);
@@ -79,6 +111,13 @@ export default function LiveFeed() {
     }
 
     return window.isSecureContext || window.location.hostname === 'localhost';
+  }, []);
+  const isLocalhost = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return true;
+    }
+
+    return ['localhost', '127.0.0.1'].includes(window.location.hostname);
   }, []);
 
   const ensureAudioContext = useCallback(async () => {
@@ -360,25 +399,55 @@ export default function LiveFeed() {
 
       frameCountRef.current += 1;
       const now = performance.now();
-      if (frameCountRef.current % 3 === 0 && now - lastSendRef.current > 80) {
+      const streamInterval = getStreamInterval(activeModels);
+      if (!uploadInFlightRef.current && now - lastSendRef.current >= streamInterval) {
         lastSendRef.current = now;
-        canvas.toBlob((blob) => {
+        uploadInFlightRef.current = true;
+
+        if (!uploadCanvasRef.current) {
+          uploadCanvasRef.current = document.createElement('canvas');
+        }
+
+        const uploadCanvas = uploadCanvasRef.current;
+        const uploadWidth = Math.min(getUploadWidth(activeModels, isLocalhost), width);
+        const uploadHeight = Math.max(1, Math.round((height / width) * uploadWidth));
+        uploadCanvas.width = uploadWidth;
+        uploadCanvas.height = uploadHeight;
+
+        const uploadContext = uploadCanvas.getContext('2d');
+        if (!uploadContext) {
+          uploadInFlightRef.current = false;
+          return;
+        }
+
+        uploadContext.drawImage(video, 0, 0, uploadWidth, uploadHeight);
+
+        uploadCanvas.toBlob((blob) => {
           if (!blob) {
+            uploadInFlightRef.current = false;
             return;
           }
 
           blob.arrayBuffer().then((buffer) => {
+            let sent = false;
             if (activeModels.includes('weapon')) {
-              sendWeaponFrame(buffer);
+              sent = sendWeaponFrame(buffer) || sent;
             }
             if (activeModels.includes('smokefire')) {
-              sendHazardFrame(buffer);
+              sent = sendHazardFrame(buffer) || sent;
             }
             if (activeModels.includes('violence')) {
-              sendViolenceFrame(buffer);
+              sent = sendViolenceFrame(buffer) || sent;
             }
+            if (!sent) {
+              lastSendRef.current = 0;
+            }
+          }).catch(() => {
+            lastSendRef.current = 0;
+          }).finally(() => {
+            uploadInFlightRef.current = false;
           });
-        }, 'image/jpeg', 0.72);
+        }, 'image/jpeg', STREAM_JPEG_QUALITY);
       }
 
       fpsTrackerRef.current.frames += 1;
@@ -469,6 +538,7 @@ export default function LiveFeed() {
     latestDetectionsRef.current = createEmptyDetectionState();
     frameCountRef.current = 0;
     lastSendRef.current = 0;
+    uploadInFlightRef.current = false;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
 
