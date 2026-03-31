@@ -5,13 +5,22 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
+    from .env_loader import load_backend_env
+except ImportError:  # pragma: no cover
+    from env_loader import load_backend_env
+
+load_backend_env()
+
+try:
     from .models import loader
     from .routers.detect import router as detect_router
     from .routers.stream import router as stream_router
+    from .services.telegram import telegram_notifier
 except ImportError:  # pragma: no cover
     from models import loader
     from routers.detect import router as detect_router
     from routers.stream import router as stream_router
+    from services.telegram import telegram_notifier
 
 
 @asynccontextmanager
@@ -61,5 +70,8 @@ async def health_check():
     return {
         "name": "Pegasusxz AI Surveillance Backend",
         "version": app.version,
+        "notifications": {
+            "telegram": telegram_notifier.get_status(),
+        },
         **loader.get_model_status(),
     }

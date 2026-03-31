@@ -72,6 +72,8 @@ cd backend
 pip install -r requirements.txt
 ```
 
+The backend automatically loads `backend/.env` on startup for local development.
+
 Model files are auto-discovered from `backend/models/`:
 
 - Weapon model: `weapon.pt` or `02032026.pt`
@@ -115,6 +117,13 @@ curl http://localhost:8000/health
 | `Pegasusxz_MAX_UPLOAD_BYTES` | `8388608` | Max size for a single uploaded image in bytes |
 | `Pegasusxz_MAX_BATCH_IMAGES` | `10` | Max images accepted by `/detect/batch` |
 | `Pegasusxz_MAX_STREAM_FRAME_BYTES` | `3145728` | Max size for a streamed WebSocket frame in bytes |
+| `Pegasusxz_TELEGRAM_ENABLED` | `false` | Enables Telegram warnings for positive detections when bot credentials are configured |
+| `Pegasusxz_TELEGRAM_BOT_TOKEN` | unset | Telegram bot token used to send warnings |
+| `Pegasusxz_TELEGRAM_CHAT_ID` | unset | Target Telegram user, group, or channel chat id |
+| `Pegasusxz_TELEGRAM_ALERT_COOLDOWN_SECONDS` | `30` | Cooldown per detection label set to reduce repeat alerts from consecutive frames |
+| `Pegasusxz_TELEGRAM_MIN_CONFIDENCE` | `0.0` | Minimum detection confidence required before a Telegram warning is sent |
+
+For local setup, edit `backend/.env` and keep your real Telegram values there.
 
 ## Frontend Setup
 
@@ -153,6 +162,8 @@ Live camera capture usually requires `https://` or `localhost` in modern browser
 ### `GET /health`
 
 Returns dependency status and model load status.
+
+When Telegram alerts are enabled, `/health` also reports whether the notifier is configured.
 
 ### `POST /detect/weapon`
 
@@ -278,6 +289,7 @@ python backend/test_ws_client.py --model violence --image test.jpg --frames 20
 
 - Copy `backend/.env.example` and `frontend/.env.example` into real environment variables on your host.
 - Confirm `/health` reports all three models as loaded after deploy.
+- If you want remote warnings, configure the Telegram bot token and chat id, then confirm `/health` shows Telegram as enabled and configured.
 - Test camera access over HTTPS if you plan to use the live feed outside localhost.
 - Keep `frontend/node_modules`, `frontend/dist`, and local logs out of version control using the included `.gitignore`.
 

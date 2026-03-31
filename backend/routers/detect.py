@@ -14,10 +14,12 @@ except ImportError:  # pragma: no cover
 try:
     from ..models import loader
     from ..models.violence import create_sequence_state, run_violence_inference
+    from ..services.telegram import telegram_notifier
     from ..utils.drawing import draw_annotated_image_base64
 except ImportError:  # pragma: no cover
     from models import loader
     from models.violence import create_sequence_state, run_violence_inference
+    from services.telegram import telegram_notifier
     from utils.drawing import draw_annotated_image_base64
 
 router = APIRouter(prefix="/detect", tags=["Detection"])
@@ -239,7 +241,13 @@ async def detect_weapon(
     confidence_threshold: float = Form(DEFAULT_CONFIDENCE),
 ):
     decoded_image = await _decode_upload_image(image)
-    return run_model_inference(decoded_image, "weapon", confidence_threshold)
+    result = run_model_inference(decoded_image, "weapon", confidence_threshold)
+    telegram_notifier.schedule_detection_alert(
+        result,
+        source="http /detect/weapon",
+        filename=image.filename,
+    )
+    return result
 
 
 @router.post("/smokefire")
@@ -248,7 +256,13 @@ async def detect_smokefire(
     confidence_threshold: float = Form(DEFAULT_CONFIDENCE),
 ):
     decoded_image = await _decode_upload_image(image)
-    return run_model_inference(decoded_image, "smokefire", confidence_threshold)
+    result = run_model_inference(decoded_image, "smokefire", confidence_threshold)
+    telegram_notifier.schedule_detection_alert(
+        result,
+        source="http /detect/smokefire",
+        filename=image.filename,
+    )
+    return result
 
 
 @router.post("/violence")
@@ -257,7 +271,13 @@ async def detect_violence(
     confidence_threshold: float = Form(DEFAULT_CONFIDENCE),
 ):
     decoded_image = await _decode_upload_image(image)
-    return run_model_inference(decoded_image, "violence", confidence_threshold)
+    result = run_model_inference(decoded_image, "violence", confidence_threshold)
+    telegram_notifier.schedule_detection_alert(
+        result,
+        source="http /detect/violence",
+        filename=image.filename,
+    )
+    return result
 
 
 @router.post("/annotated")
@@ -268,6 +288,11 @@ async def detect_annotated(
 ):
     decoded_image = await _decode_upload_image(image)
     result = run_model_inference(decoded_image, model_name, confidence_threshold)
+    telegram_notifier.schedule_detection_alert(
+        result,
+        source="http /detect/annotated",
+        filename=image.filename,
+    )
     result["annotated_image_base64"] = draw_annotated_image_base64(
         image=decoded_image,
         detections=result["detections"],
@@ -306,6 +331,11 @@ async def detect_batch(
             normalized_model_name,
             confidence_threshold,
             sequence_state=sequence_state,
+        )
+        telegram_notifier.schedule_detection_alert(
+            result,
+            source="http /detect/batch",
+            filename=image.filename,
         )
         if include_annotations:
             result["annotated_image_base64"] = draw_annotated_image_base64(

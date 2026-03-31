@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconn
 
 try:
     from ..models.violence import create_sequence_state
+    from ..services.telegram import telegram_notifier
     from .detect import (
         DEFAULT_CONFIDENCE,
         _read_int_env,
@@ -15,6 +16,7 @@ try:
     )
 except ImportError:  # pragma: no cover
     from models.violence import create_sequence_state
+    from services.telegram import telegram_notifier
     from routers.detect import (
         DEFAULT_CONFIDENCE,
         _read_int_env,
@@ -108,6 +110,10 @@ async def stream_detections(
                     normalized_model_name,
                     normalized_confidence,
                     sequence_state=sequence_state,
+                )
+                telegram_notifier.schedule_detection_alert(
+                    result,
+                    source=f"ws /ws/stream/{normalized_model_name}",
                 )
                 if not await send_json(result):
                     break
